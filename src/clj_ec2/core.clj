@@ -1,14 +1,26 @@
 (ns clj-ec2.core
+  (:use propertea.core)
   (:import com.amazonaws.services.ec2.AmazonEC2Client
            com.amazonaws.auth.BasicAWSCredentials
-           java.util.List
-           (com.amazonaws.services.ec2.model DescribeBundleTasksResult DescribeAvailabilityZonesRequest DescribeBundleTasksRequest Filter
-                                             AvailabilityZoneMessage BundleTask AvailabilityZone)))
+           (com.amazonaws.services.ec2.model S3Storage Storage Address DescribeBundleTasksResult DescribeAddressesResult DescribeAddressesRequest
+                                             DescribeAvailabilityZonesResult DescribeAvailabilityZonesRequest DescribeBundleTasksRequest Filter
+                                             DescribeConversionTasksResult DescribeConversionTasksRequest ConversionTask
+                                             DiskImageDescription DiskImageVolumeDescription CustomerGateway
+                                             DescribeCustomerGatewaysResult DescribeCustomerGatewaysRequest
+                                             ImportInstanceTaskDetails ImportVolumeTaskDetails Tag ImportInstanceVolumeDetailItem
+                                             AvailabilityZoneMessage BundleTask BundleTaskError AvailabilityZone)))
 
-(def endpoints {})
 
-(defn credentials []
-  "BLA")
+(def endpoints {:us-east-1 "ec2.us-east-1.amazonaws.com"
+                :us-west-1 "ec2.us-west-1.amazonaws.com"
+                :us-west-2 "ec2.us-west-2.amazonaws.com"
+                :eu-west-1 "ec2.eu-west-1.amazonaws.com"
+                :ap-southeast-1 "ec2.ap-southeast-1.amazonaws.com"
+                :ap-southeast-2 "ec2.ap-southeast-2.amazonaws.com"
+                :ap-northeast-1 "ec2.ap-northeast-1.amazonaws.com"
+                :sa-east-1 "ec2.sa-east-1.amazonaws.com"})
+
+(defn credentials [] (read-properties (get (System/getenv) "AWS_CREDENTIAL_FILE") :required [:AWSAccessKeyId :AWSSecretKey]))
 
 (defn endpoint []
   (endpoints (keyword (get (System/getenv) "EC2_REGION"))))
@@ -107,13 +119,14 @@
 ;; void 	deleteVpnGateway(DeleteVpnGatewayRequest deleteVpnGatewayRequest)
 ;; void 	deregisterImage(DeregisterImageRequest deregisterImageRequest)
 
-
-;; DescribeAddressesResult 	describeAddresses()
-;; DescribeAddressesResult 	describeAddresses(DescribeAddressesRequest describeAddressesRequest)
-
-(defn filters->map [^Filter filter]
+(defn filter->map [^Filter filter]
   {:name (.getName filter)
    :values (.getValues filter)})
+
+(defn map->filter [m]
+  (doto (Filter.)
+    (.setName ^java.lang.String (:name m))
+    (.setValues ^java.util.Collection<java.lang.String> (:values m))))
 
 (defn availability-zone-message->map [^AvailabilityZoneMessage azm]
   {:message (.getMessage azm)})
@@ -124,49 +137,163 @@
    :state (.getState az)
    :zone-name (.getZoneName az)})
 
+(defn s3-storage->map [^S3Storage storage]
+  {:aws-access-key-id (.getAWSAccessKeyId storage)
+   :bucket (.getBucket storage)
+   :prefix (.getPrefix storage)
+   :upload-policy (.getUploadPolicy storage)
+   :upload-policy-signature (.getUploadPolicySignature storage)})
+
+(defn storage->map [^Storage storage]
+  {:s3-storage (s3-storage->map (.getS3 storage))})
+
+(defn bundle-task-error->map [^BundleTaskError error]
+  {:code (.getCode error)
+   :message (.getMessage error)})
+
 (defn bundle-task->map [^BundleTask bundle-task]
   {:bundle-id (.getBundleId bundle-task)
-   :bundle-task-error (.getBundleTaskError bundle-task)
+   :bundle-task-error (bundle-task-error->map (.getBundleTaskError bundle-task))
    :instance-id (.getInstanceId bundle-task)
    :progress (.getProgress bundle-task)
-   :start-time (.getStartTime bundle-task)
+   :start-time (.getStartTime bundle-task) ;; TODO date
    :state (.getState bundle-task)
-   :storage (.getStorage bundle-task)
-   :update-time (.getUpdateTime bundle-task)})
+   :storage (storage->map (.getStorage bundle-task))
+   :update-time (.getUpdateTime bundle-task)}) ;; TODO date
+
+(defn address->map [^Address adr]
+  {:allocation-id (.getAllocationId adr)
+   :association-id (.getAssociationId adr)
+   :domain (.getDomain adr)
+   :instance-id (.getInstanceId adr)
+   :network-interface-id (.getNetworkInterfaceId adr)
+   :network-interface-owner-id (.getNetworkInterfaceOwnerId adr)
+   :private-ip (.getPrivateIpAddress adr)
+   :public-ip (.getPublicIp adr)})
+
+(defn disk-image-description->map [^DiskImageDescription desc]
+  {:checksum (.getChecksum desc)
+   :format (.getFormat desc)
+   :import-manifest-url (.getImportManifestUrl desc)
+   :size (.getSize desc)})
+
+(defn disk-image-volume-description->map [^DiskImageVolumeDescription desc]
+  {:id (.getId desc)
+   :size (.getSize desc)})
+
+(defn import-instance-volume-detail-item->map [^ImportInstanceVolumeDetailItem item]
+  {:availability-zone (.getAvailabilityZone item)
+   :bytes-converted (.getBytesConverted item)
+   :description (.getDescription item)
+   :image (disk-image-description->map (.getImage item))
+   :status (.getStatus item)
+   :status-message (.getStatusMessage item)
+   :volume (disk-image-volume-description->map(.getVolume item))})
+
+(defn import-instance-task-details->map [^ImportInstanceTaskDetails details]
+  {:description (.getDescription details)
+   :instance-id (.getInstanceId details)
+   :platform (.getPlatform details)
+   :volumns (map import-instance-volume-detail-item->map (.getVolumes details))})
+
+(defn import-volume-task-details->map [^ImportVolumeTaskDetails details]
+  {:availability-zone (.getAvailabilityZone details)
+   :bytes-converted (.getBytesConverted details)
+   :description (.getDescription details)
+   :image (disk-image-description->map (.getImage details))
+   :volume (disk-image-volume-description->map (.getVolume details))})
+
+(defn tag->map [^Tag tag]
+  {:key (.getKey tag)
+   :value (.getValue tag)})
+
+(defn conversion-task->map [^ConversionTask task]
+  {:conversion-task-id (.getConversionTaskId task)
+   :expiration-time (.getExpirationTime task)
+   :import-instance (import-instance-task-details->map (.getImportInstance task))
+   :import-volume (import-volume-task-details->map (.getImportVolume task))
+   :state (.getState task)
+   :status-message (.getStatusMessage task)
+   :tags (map tag->map (.getTags task))})
+
+(defn customer-gateway->map [^CustomerGateway gateway]
+  {:border-gateway-protocol-autonmous-system-number (.getBgpAsn gateway)
+   :customer-gateway-id (.getCustomerGatewayId gateway)
+   :ip-address (.getIpAddress gateway)
+   :state (.getState gateway)
+   :tags (map tag->map (.getTags gateway))
+   :type (.getType gateway)})
 
 (defn describe-bundle-tasks-result->map [^DescribeBundleTasksResult res]
   {:bundle-tasks (map bundle-task->map (.getBundleTasks res))})
 
+(defn describe-availability-zones-result->map [^DescribeAvailabilityZonesResult res]
+  {:availability-zones (map availability-zone->map (.getAvailabilityZones res))})
+
+(defn describe-addresses-result->map [^DescribeAddressesResult res]
+  {:addresses (map address->map (.getAddresses res))})
+
+(defn describe-conversion-tasks-result->map [^DescribeConversionTasksResult res]
+  {:conversion-tasks (map conversion-task->map (.getConversionTasks res))})
+
+(defn describe-customer-gateways->map [^DescribeCustomerGatewaysResult res]
+  {:customer-gateways (map customer-gateway->map (.getCustomerGateways res))})
+
+;; ------------------
+
+(defn describe-addresses
+  ([]
+     (describe-addresses-result->map (.describeAddresses @client)))
+  ([m]
+     (let [dareq (doto (DescribeAddressesRequest.)
+                   (.setAllocationIds ^java.util.Collection<java.lang.String> (:allocation-ids m))
+                   (.setFilters ^java.util.Collection<Filter> (:filters m))
+                   (.setPublicIps ^java.util.Collection<java.lang.String> (:public-ips m)))]
+       (describe-addresses-result->map (.describeAddresses @client dareq)))))
+
 (defn describe-availability-zones
   ([]
-     (.describeAvailabilityZones @client))
+     (describe-availability-zones-result->map (.describeAvailabilityZones @client)))
   ([m]
      (let [dazreq (doto (DescribeAvailabilityZonesRequest.)
-                    (.setFilters ^java.util.Collection<Filter> (map filters->map (:filters m)))
+                    (.setFilters ^java.util.Collection<Filter> (map map->filter (:filters m)))
                     (.setZoneNames ^java.util.Collection<String> (:zone-names m)))]
-       (availability-zone->map (.describeAvailabilityZones @client ^DescribeAvailabilityZonesRequest dazreq)))))
-
-;; BundleTaskError 	getBundleTaskError()
-;; java.util.Date 	getStartTime()
-;; Storage 	        getStorage()
+       (describe-availability-zones-result->map (.describeAvailabilityZones @client ^DescribeAvailabilityZonesRequest dazreq)))))
 
 (defn describe-bundle-tasks
   ([]
-     (.describeBundleTasks @client))
+     (describe-bundle-tasks-result->map (.describeBundleTasks @client)))
   ([m]
      (let [dbtreq (doto (DescribeBundleTasksRequest.)
                     (.setBundleIds ^java.util.Collection<String> (:bundle-ids m))
                     (.setFilters ^java.util.Collection<Filter (:filters m)))]
-       (.describeBundleTasks @client dbtreq))))
+       (describe-bundle-tasks-result->map (.describeBundleTasks @client dbtreq)))))
 
-;; DescribeConversionTasksResult 	describeConversionTasks()
-;; DescribeConversionTasksResult 	describeConversionTasks(DescribeConversionTasksRequest describeConversionTasksRequest)
-;; DescribeCustomerGatewaysResult 	describeCustomerGateways()
-;; DescribeCustomerGatewaysResult 	describeCustomerGateways(DescribeCustomerGatewaysRequest describeCustomerGatewaysRequest)
+(defn describe-conversion-tasks
+  ([]
+     (describe-conversion-tasks-result->map (.describeConversionTasks @client)))
+  ([m]
+     (let [dctreq (doto (DescribeConversionTasksRequest.)
+                    (.setConversionTaskIds ^java.util.Collection<java.lang.String> (:conversion-task-ids m))
+                    (.setFilters ^java.util.Collection<Filter> (map map->filter (:filters m))))]
+       (describe-conversion-tasks-result->map (.describeConversionTasks @client dctreq)))))
+
+(defn describe-customer-gateways
+  ([]
+     (describe-customer-gateways->map (.describeCustomerGateways @client)))
+  ([m]
+     (let [dcgreq (doto (DescribeCustomerGatewaysRequest.)
+                    (.setCustomerGatewayIds ^java.util.Collection<java.lang.String>(:customer-gateway-ids m))
+                    (.setFilters ^java.util.Collection<Filter>(:filters m)))]
+       (describe-customer-gateways->map (.describeCustomerGateways @client dcgreq)))))
+
+
 ;; DescribeDhcpOptionsResult 	describeDhcpOptions()
 ;; DescribeDhcpOptionsResult 	describeDhcpOptions(DescribeDhcpOptionsRequest describeDhcpOptionsRequest)
+
 ;; DescribeExportTasksResult 	describeExportTasks()
 ;; DescribeExportTasksResult 	describeExportTasks(DescribeExportTasksRequest describeExportTasksRequest)
+
 ;; DescribeImageAttributeResult 	describeImageAttribute(DescribeImageAttributeRequest describeImageAttributeRequest)
 ;; DescribeImagesResult 	describeImages()
 ;; DescribeImagesResult 	describeImages(DescribeImagesRequest describeImagesRequest)
